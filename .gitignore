@@ -5,3 +5,6 @@ main
 main.dSYM
 .vscode/tasks.json
 build/
+runtime/
+.pycache/
+*.pyc

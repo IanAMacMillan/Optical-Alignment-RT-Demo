@@ -7,6 +7,7 @@
 #include "queue.h"
 
 #include "controller.h"
+#include "visualizer_runtime.h"
 
 #define SENSOR_TASK_PRIORITY 3
 #define CONTROL_TASK_PRIORITY 2
@@ -25,24 +26,11 @@ typedef struct
 {
     unsigned long sensor_tick;
     unsigned long sample_count;
+    double setpoint;
     double disturbance;
     double true_error;
     double measured_error;
 } SensorMeasurement;
-
-typedef struct
-{
-    unsigned long sensor_tick;
-    unsigned long sensor_sample_count;
-    unsigned long control_tick;
-    unsigned long control_cycle_count;
-    double disturbance;
-    double actuator_position;
-    double true_error;
-    double measured_error;
-    double requested_control;
-    double applied_control;
-} SharedStatus;
 
 static SharedStatus g_shared_status = {0};
 static SemaphoreHandle_t g_status_mutex = NULL;
@@ -81,17 +69,21 @@ static void SensorTask(void *pvParameters)
     {
         SensorMeasurement measurement;
         double actuator_position = 0.0;
+        double setpoint = 0.0;
 
         if (xSemaphoreTake(g_status_mutex, portMAX_DELAY) == pdTRUE)
         {
             actuator_position = g_shared_status.actuator_position;
+            setpoint = g_shared_status.setpoint;
             xSemaphoreGive(g_status_mutex);
         }
 
         measurement.sensor_tick = (unsigned long)xTaskGetTickCount();
         measurement.sample_count = ++sample_count;
+        measurement.setpoint = setpoint;
         measurement.disturbance = disturbance_for_sample(measurement.sample_count);
-        measurement.true_error = measurement.disturbance - actuator_position;
+        measurement.true_error =
+            measurement.setpoint - (measurement.disturbance + actuator_position);
         measurement.measured_error = measurement.true_error + sample_noise();
 
         if (xQueueSend(g_measurement_queue, &measurement, portMAX_DELAY) != pdPASS)
@@ -110,23 +102,49 @@ static void ControlTask(void *pvParameters)
     for (;;)
     {
         SensorMeasurement measurement;
+        int controller_enabled = 1;
 
         if (xQueueReceive(g_measurement_queue, &measurement, portMAX_DELAY) == pdPASS)
         {
-            ControlOutput control_output =
-                controller_compute(measurement.measured_error, &g_controller_config);
             if (xSemaphoreTake(g_status_mutex, portMAX_DELAY) == pdTRUE)
             {
+                ControlOutput control_output = {0};
+                double updated_actuator_position =
+                    g_shared_status.actuator_position;
+                double updated_true_value =
+                    measurement.disturbance + g_shared_status.actuator_position;
+                double updated_true_error =
+                    measurement.setpoint - updated_true_value;
+
+                controller_enabled = g_shared_status.controller_enabled;
+
+                if (controller_enabled)
+                {
+                    control_output =
+                        controller_compute(measurement.measured_error, &g_controller_config);
+                    updated_actuator_position += control_output.applied_control;
+                    updated_true_value = measurement.disturbance + updated_actuator_position;
+                    updated_true_error = measurement.setpoint - updated_true_value;
+                }
+                else
+                {
+                    updated_actuator_position = 0.0;
+                    updated_true_value = measurement.disturbance;
+                    updated_true_error = measurement.setpoint - updated_true_value;
+                }
+
                 g_shared_status.sensor_tick = measurement.sensor_tick;
                 g_shared_status.sensor_sample_count = measurement.sample_count;
                 g_shared_status.control_tick = (unsigned long)xTaskGetTickCount();
                 g_shared_status.control_cycle_count++;
+                g_shared_status.setpoint = measurement.setpoint;
                 g_shared_status.disturbance = measurement.disturbance;
-                g_shared_status.true_error = measurement.true_error;
+                g_shared_status.true_value = updated_true_value;
+                g_shared_status.true_error = updated_true_error;
                 g_shared_status.measured_error = measurement.measured_error;
                 g_shared_status.requested_control = control_output.requested_control;
                 g_shared_status.applied_control = control_output.applied_control;
-                g_shared_status.actuator_position += control_output.applied_control;
+                g_shared_status.actuator_position = updated_actuator_position;
                 xSemaphoreGive(g_status_mutex);
             }
         }
@@ -137,12 +155,15 @@ static void LoggerTask(void *pvParameters)
 {
     (void)pvParameters;
 
+    double setpoint = 0.0;
     double disturbance = 0.0;
+    double true_value = 0.0;
     double actuator_position = 0.0;
     double true_error = 0.0;
     double measured_error = 0.0;
     double requested_control = 0.0;
     double applied_control = 0.0;
+    int controller_enabled = 1;
 
     TickType_t last_wake_time = xTaskGetTickCount();
 
@@ -159,7 +180,10 @@ static void LoggerTask(void *pvParameters)
             sensor_sample_count = g_shared_status.sensor_sample_count;
             control_tick = g_shared_status.control_tick;
             control_cycle_count = g_shared_status.control_cycle_count;
+            controller_enabled = g_shared_status.controller_enabled;
+            setpoint = g_shared_status.setpoint;
             disturbance = g_shared_status.disturbance;
+            true_value = g_shared_status.true_value;
             actuator_position = g_shared_status.actuator_position;
             true_error = g_shared_status.true_error;
             measured_error = g_shared_status.measured_error;
@@ -168,13 +192,16 @@ static void LoggerTask(void *pvParameters)
             xSemaphoreGive(g_status_mutex);
         }
 
-        printf("[LoggerTask ] logger_tick = %lu, sensor_tick = %lu, samples = %lu, control_tick = %lu, cycles = %lu, disturbance = %.2f, true_error = %.2f, measured_error = %.2f, requested = %.2f, applied = %.2f, actuator = %.2f\n",
+        printf("[LoggerTask ] logger_tick = %lu, sensor_tick = %lu, samples = %lu, control_tick = %lu, cycles = %lu, enabled = %d, setpoint = %.2f, disturbance = %.2f, true_value = %.2f, true_error = %.2f, measured_error = %.2f, requested = %.2f, applied = %.2f, actuator = %.2f\n",
                (unsigned long)xTaskGetTickCount(),
                sensor_tick,
                sensor_sample_count,
                control_tick,
                control_cycle_count,
+               controller_enabled,
+               setpoint,
                disturbance,
+               true_value,
                true_error,
                measured_error,
                requested_control,
@@ -196,8 +223,11 @@ void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 
 int main(void)
 {
+    VisualizerRuntimeContext visualizer_runtime = {0};
     srand(1);
-    
+
+    visualizer_runtime_prepare_files();
+
     BaseType_t status;
 
     g_measurement_queue = xQueueCreate(8, sizeof(SensorMeasurement));
@@ -215,6 +245,17 @@ int main(void)
         fprintf(stderr, "Failed to create status mutex\n");
         return 1;
     }
+
+    if (xSemaphoreTake(g_status_mutex, portMAX_DELAY) == pdTRUE)
+    {
+        g_shared_status.controller_enabled = 1;
+        g_shared_status.setpoint = 0.0;
+        xSemaphoreGive(g_status_mutex);
+    }
+
+    visualizer_runtime.shared_status = &g_shared_status;
+    visualizer_runtime.status_mutex = g_status_mutex;
+    visualizer_runtime.sensor_period_ms = SENSOR_TASK_PERIOD_MS;
 
     status = xTaskCreate(
         SensorTask,
@@ -255,6 +296,14 @@ int main(void)
     if (status != pdPASS)
     {
         fprintf(stderr, "Failed to create LoggerTask\n");
+        return 1;
+    }
+
+    status = visualizer_runtime_start(&visualizer_runtime);
+
+    if (status != pdPASS)
+    {
+        fprintf(stderr, "Failed to start visualizer runtime tasks\n");
         return 1;
     }
 
