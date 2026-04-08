@@ -20,8 +20,8 @@ class VisualizerApp(tk.Tk):
         super().__init__()
 
         self.title("Optical Alignment Visualizer")
-        self.geometry("980x760")
-        self.minsize(880, 680)
+        self.geometry("1320x780")
+        self.minsize(1120, 700)
 
         self.snapshot = None
         self.last_sample_count = None
@@ -43,6 +43,42 @@ class VisualizerApp(tk.Tk):
             "samples": tk.StringVar(value="0"),
             "cycles": tk.StringVar(value="0"),
         }
+        self.rtos_vars = {
+            "scheduler": tk.StringVar(value="Preemptive"),
+            "tick_rate": tk.StringVar(value="100 Hz"),
+            "tick_period": tk.StringVar(value="10 ms"),
+            "sensor_status": tk.StringVar(
+                value="P3, 200 ms periodic producer, pushes noisy measurements onto the queue"
+            ),
+            "control_status": tk.StringVar(
+                value="P2, queue-driven consumer, waiting for measurements"
+            ),
+            "logger_status": tk.StringVar(
+                value="P1, 1000 ms periodic telemetry task, reads shared state under mutex"
+            ),
+            "command_status": tk.StringVar(
+                value="P1, 100 ms polling task, reads setpoint/enable commands from command.json"
+            ),
+            "snapshot_status": tk.StringVar(
+                value="P1, 100 ms publishing task, writes snapshot.json for the GUI"
+            ),
+            "control_mode": tk.StringVar(value="enabled"),
+            "pause_behavior": tk.StringVar(
+                value="When disabled, applied control is forced to zero and true value drifts to the external offset."
+            ),
+            "ipc": tk.StringVar(
+                value="Queue: SensorTask -> ControlTask | Mutex: shared snapshot/status"
+            ),
+            "priority_order": tk.StringVar(
+                value=(
+                    "P3  SensorTask\n"
+                    "P2  ControlTask\n"
+                    "P1  LoggerTask\n"
+                    "P1  CommandTask\n"
+                    "P1  SnapshotTask"
+                )
+            ),
+        }
         self.status_var = tk.StringVar(value="Waiting for runtime/snapshot.json")
         self.setpoint_var = tk.DoubleVar(value=0.0)
         self.controller_enabled_var = tk.BooleanVar(value=True)
@@ -52,12 +88,13 @@ class VisualizerApp(tk.Tk):
         self._schedule_poll()
 
     def _build_ui(self) -> None:
-        self.columnconfigure(0, weight=1)
+        self.columnconfigure(0, weight=3)
+        self.columnconfigure(1, weight=1)
         self.rowconfigure(3, weight=1)
         self.rowconfigure(4, weight=1)
 
         header = ttk.Frame(self, padding=12)
-        header.grid(row=0, column=0, sticky="ew")
+        header.grid(row=0, column=0, columnspan=2, sticky="ew")
         header.columnconfigure(0, weight=1)
 
         ttk.Label(
@@ -103,6 +140,53 @@ class VisualizerApp(tk.Tk):
         )
         self.enable_check.grid(row=0, column=2, sticky="e")
 
+        sidebar = ttk.Frame(self, padding=(0, 0, 12, 12))
+        sidebar.grid(row=1, column=1, rowspan=4, sticky="nsew")
+        sidebar.columnconfigure(0, weight=1)
+
+        overview_frame = ttk.LabelFrame(sidebar, text="RTOS Overview", padding=12)
+        overview_frame.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        overview_items = [
+            ("Scheduler", "scheduler"),
+            ("Tick Rate", "tick_rate"),
+            ("Tick Period", "tick_period"),
+            ("IPC", "ipc"),
+            ("Priority Order", "priority_order"),
+        ]
+        for row, (label, key) in enumerate(overview_items):
+            ttk.Label(overview_frame, text=label, font=("Helvetica", 10, "bold")).grid(
+                row=row, column=0, sticky="nw", pady=(0, 6)
+            )
+            ttk.Label(
+                overview_frame,
+                textvariable=self.rtos_vars[key],
+                wraplength=300,
+                justify="left",
+                font=("Helvetica", 10),
+            ).grid(row=row, column=1, sticky="nw", padx=(10, 0), pady=(0, 6))
+
+        live_frame = ttk.LabelFrame(sidebar, text="Live RTOS Status", padding=12)
+        live_frame.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        live_items = [
+            ("Control Mode", "control_mode"),
+            ("SensorTask", "sensor_status"),
+            ("ControlTask", "control_status"),
+            ("LoggerTask", "logger_status"),
+            ("CommandTask", "command_status"),
+            ("SnapshotTask", "snapshot_status"),
+        ]
+        for row, (label, key) in enumerate(live_items):
+            ttk.Label(live_frame, text=label, font=("Helvetica", 10, "bold")).grid(
+                row=row, column=0, sticky="nw", pady=(0, 6)
+            )
+            ttk.Label(
+                live_frame,
+                textvariable=self.rtos_vars[key],
+                wraplength=300,
+                justify="left",
+                font=("Helvetica", 10),
+            ).grid(row=row, column=1, sticky="nw", padx=(10, 0), pady=(0, 6))
+
         metrics_section = ttk.Frame(self, padding=(12, 0, 12, 12))
         metrics_section.grid(row=2, column=0, sticky="ew")
         metrics_section.columnconfigure(0, weight=1)
@@ -132,7 +216,7 @@ class VisualizerApp(tk.Tk):
             ("Samples", "samples"),
             ("Cycles", "cycles"),
             ("Setpoint", "setpoint"),
-            ("Disturbance", "disturbance"),
+            ("External Offset", "disturbance"),
             ("True Value", "true_value"),
             ("Actuator", "actuator_position"),
             ("True Error", "true_error"),
@@ -269,6 +353,23 @@ class VisualizerApp(tk.Tk):
         self.metric_vars["samples"].set(str(self.snapshot.get("sensor_sample_count", 0)))
         self.metric_vars["cycles"].set(str(self.snapshot.get("control_cycle_count", 0)))
 
+        self.rtos_vars["control_mode"].set("enabled" if controller_enabled else "disabled")
+        self.rtos_vars["sensor_status"].set(
+            f"P3, 200 ms producer, samples={self.snapshot.get('sensor_sample_count', 0)}, queue -> ControlTask"
+        )
+        self.rtos_vars["control_status"].set(
+            f"P2, queue consumer, {'applying correction' if controller_enabled else 'paused, forcing zero correction'}, cycles={self.snapshot.get('control_cycle_count', 0)}"
+        )
+        self.rtos_vars["logger_status"].set(
+            "P1, 1000 ms telemetry task, lower priority so logging cannot preempt control"
+        )
+        self.rtos_vars["command_status"].set(
+            "P1, 100 ms operator-command poller, updates setpoint and enable state"
+        )
+        self.rtos_vars["snapshot_status"].set(
+            "P1, 100 ms GUI publisher, exports the shared snapshot without touching the control queue"
+        )
+
         if not self.slider_dragging:
             self.setpoint_var.set(self.snapshot.get("setpoint", 0.0))
         self.controller_enabled_var.set(controller_enabled)
@@ -306,7 +407,7 @@ class VisualizerApp(tk.Tk):
             ("True", self.snapshot.get("true_value", 0.0), "#ef6c00"),
             ("Actuator", self.snapshot.get("actuator_position", 0.0), "#1565c0"),
             ("Measured Error", self.snapshot.get("measured_error", 0.0), "#c62828"),
-            ("Disturbance", self.snapshot.get("disturbance", 0.0), "#6a1b9a"),
+            ("External Offset", self.snapshot.get("disturbance", 0.0), "#6a1b9a"),
         ]
 
         for index, (label, value, color) in enumerate(markers):
