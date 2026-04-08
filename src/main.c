@@ -14,8 +14,6 @@ int main(void)
         .actuator_position = 0.1,
         .error = 0.0};
 
-    state.error = state.disturbance - state.actuator_position;
-
     for (int step = 0; step < 10; step++)
     {
         state.error = state.disturbance - state.actuator_position;
