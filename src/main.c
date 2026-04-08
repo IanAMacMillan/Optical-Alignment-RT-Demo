@@ -5,11 +5,21 @@ typedef struct
 {
     double disturbance;
     double actuator_position;
+} AlignmentPlantState;
+
+typedef struct
+{
+    int step;
     double true_error;
     double measured_error;
+} SensorMeasurement;
+
+typedef struct
+{
+    int step;
     double requested_control;
     double applied_control;
-} AlignmentPlantState;
+} ControlCommand;
 
 static double sample_noise(void)
 {
@@ -35,6 +45,49 @@ static double clamp(double value, double min_value, double max_value)
     return value;
 }
 
+static void update_disturbance(AlignmentPlantState *plant, int step)
+{
+    if (step < 5)
+    {
+        plant->disturbance = 0.0;
+    }
+    else if (step < 10)
+    {
+        plant->disturbance = 0.5;
+    }
+    else
+    {
+        plant->disturbance = 0.2;
+    }
+}
+
+static SensorMeasurement measure_sensor(const AlignmentPlantState *plant, int step)
+{
+    SensorMeasurement measurement;
+
+    measurement.step = step;
+    measurement.true_error = plant->disturbance - plant->actuator_position;
+    measurement.measured_error = measurement.true_error + sample_noise();
+
+    return measurement;
+}
+
+static ControlCommand run_controller(const SensorMeasurement *measurement, double kp, double max_control)
+{
+    ControlCommand command;
+
+    command.step = measurement->step;
+    command.requested_control = kp * measurement->measured_error;
+    command.applied_control = clamp(command.requested_control, -max_control, max_control);
+
+    return command;
+}
+
+static void apply_actuator(AlignmentPlantState *plant, const ControlCommand *command)
+{
+    plant->actuator_position += command->applied_control;
+}
+
 int main(void)
 {
     const double kp = 0.4;
@@ -42,44 +95,39 @@ int main(void)
 
     srand(1);
 
-    AlignmentPlantState state = {
+    AlignmentPlantState plant = {
         .disturbance = 0.0,
-        .actuator_position = 0.0,
-        .true_error = 0.0,
-        .measured_error = 0.0,
-        .requested_control = 0.0,
-        .applied_control = 0.0};
+        .actuator_position = 0.0};
 
     for (int step = 0; step < 15; step++)
     {
-        if (step < 5)
+        update_disturbance(&plant, step);
+
+        SensorMeasurement measurement = measure_sensor(&plant, step);
+        ControlCommand command = run_controller(&measurement, kp, max_control);
+
+        apply_actuator(&plant, &command);
+
+        if (command.requested_control >= max_control)
         {
-            state.disturbance = 0.0;
-        }
-        else if (step < 10)
-        {
-            state.disturbance = 0.5;
-        }
-        else
-        {
-            state.disturbance = 0.2;
+            printf("Command requested control %.2f exceeds max control %.2f, clamping applied control to %.2f\n",
+                   command.requested_control, max_control, command.applied_control);
         }
 
-        state.true_error = state.disturbance - state.actuator_position;
-        state.measured_error = state.true_error + sample_noise();
-
-        state.requested_control = kp * state.measured_error;
-        state.applied_control = clamp(state.requested_control, -max_control, max_control);
-        state.actuator_position += state.applied_control;
+        if (command.applied_control >= max_control)
+        {
+            printf("Saturation Fault: Command applied control %.2f is at max control limit %.2f\n",
+                   command.applied_control, max_control);
+        }
 
         printf("step %d: disturbance = %.2f, true_error = %.2f, measured_error = %.2f, requested = %.2f, applied = %.2f, actuator_position = %.2f\n",
                step,
-               state.disturbance,
-               state.true_error,
-               state.measured_error,
-               state.requested_control,
-               state.applied_control,
-               state.actuator_position);
+               plant.disturbance,
+               measurement.true_error,
+               measurement.measured_error,
+               command.requested_control,
+               command.applied_control,
+               plant.actuator_position);
     }
 
     return 0;
