@@ -36,6 +36,25 @@ typedef struct
     int controller_enabled;
 } TelemetrySnapshot;
 
+typedef struct
+{
+    int controller_enabled;
+} SupervisorState;
+
+static SupervisorState update_supervisor_state(int step)
+{
+    SupervisorState supervisor;
+
+    supervisor.controller_enabled = 1;
+
+    if (step >= 8 && step < 11)
+    {
+        supervisor.controller_enabled = 0;
+    }
+
+    return supervisor;
+}
+
 static double sample_noise(void)
 {
     const double noise_amplitude = 0.05;
@@ -87,10 +106,10 @@ static SensorMeasurement measure_sensor(const AlignmentPlantState *plant, int st
     return measurement;
 }
 
-static ControlCommand run_controller(const SensorMeasurement *measurement, double kp, double max_control, int controller_enabled)
+static ControlCommand run_controller(const SensorMeasurement *measurement, double kp, double max_control, const SupervisorState *supervisor)
 {
     ControlCommand command;
-    if (!controller_enabled)
+    if (!supervisor->controller_enabled)
     {
         command.step = measurement->step;
         command.requested_control = 0.0;
@@ -117,7 +136,7 @@ static TelemetrySnapshot make_telemetry_snapshot(
     const SensorMeasurement *measurement,
     const ControlCommand *command,
     double sample_period_s,
-    int controller_enabled)
+    const SupervisorState *supervisor)
 {
     TelemetrySnapshot snapshot;
 
@@ -130,7 +149,7 @@ static TelemetrySnapshot make_telemetry_snapshot(
     snapshot.applied_control = command->applied_control;
     snapshot.actuator_position = plant->actuator_position;
     snapshot.saturated = command->saturated;
-    snapshot.controller_enabled = controller_enabled;
+    snapshot.controller_enabled = supervisor->controller_enabled;
 
     return snapshot;
 }
@@ -167,22 +186,15 @@ int main(void)
     {
         update_disturbance(&plant, step);
 
-        if (step >= 8 && step < 11)
-        {
-            controller_enabled = 0;
-        }
-        else
-        {
-            controller_enabled = 1;
-        }
+        SupervisorState supervisor = update_supervisor_state(step);
 
         SensorMeasurement measurement = measure_sensor(&plant, step);
-        ControlCommand command = run_controller(&measurement, kp, max_control, controller_enabled);
+        ControlCommand command = run_controller(&measurement, kp, max_control, &supervisor);
 
         apply_actuator(&plant, &command);
 
         TelemetrySnapshot snapshot =
-            make_telemetry_snapshot(&plant, &measurement, &command, sample_period_s, controller_enabled);
+            make_telemetry_snapshot(&plant, &measurement, &command, sample_period_s, &supervisor);
         log_telemetry(&snapshot);
     }
 
