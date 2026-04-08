@@ -19,7 +19,20 @@ typedef struct
     int step;
     double requested_control;
     double applied_control;
+    int saturated;
 } ControlCommand;
+
+typedef struct
+{
+    int step;
+    double disturbance;
+    double true_error;
+    double measured_error;
+    double requested_control;
+    double applied_control;
+    double actuator_position;
+    int saturated;
+} TelemetrySnapshot;
 
 static double sample_noise(void)
 {
@@ -79,6 +92,7 @@ static ControlCommand run_controller(const SensorMeasurement *measurement, doubl
     command.step = measurement->step;
     command.requested_control = kp * measurement->measured_error;
     command.applied_control = clamp(command.requested_control, -max_control, max_control);
+    command.saturated = (command.requested_control != command.applied_control);
 
     return command;
 }
@@ -86,6 +100,38 @@ static ControlCommand run_controller(const SensorMeasurement *measurement, doubl
 static void apply_actuator(AlignmentPlantState *plant, const ControlCommand *command)
 {
     plant->actuator_position += command->applied_control;
+}
+
+static TelemetrySnapshot make_telemetry_snapshot(
+    const AlignmentPlantState *plant,
+    const SensorMeasurement *measurement,
+    const ControlCommand *command)
+{
+    TelemetrySnapshot snapshot;
+
+    snapshot.step = measurement->step;
+    snapshot.disturbance = plant->disturbance;
+    snapshot.true_error = measurement->true_error;
+    snapshot.measured_error = measurement->measured_error;
+    snapshot.requested_control = command->requested_control;
+    snapshot.applied_control = command->applied_control;
+    snapshot.actuator_position = plant->actuator_position;
+    snapshot.saturated = command->saturated;
+
+    return snapshot;
+}
+
+static void log_telemetry(const TelemetrySnapshot *snapshot)
+{
+    printf("step %d: disturbance = %.2f, true_error = %.2f, measured_error = %.2f, requested = %.2f, applied = %.2f, actuator_position = %.2f, saturated = %d\n",
+           snapshot->step,
+           snapshot->disturbance,
+           snapshot->true_error,
+           snapshot->measured_error,
+           snapshot->requested_control,
+           snapshot->applied_control,
+           snapshot->actuator_position,
+           snapshot->saturated);
 }
 
 int main(void)
@@ -108,26 +154,8 @@ int main(void)
 
         apply_actuator(&plant, &command);
 
-        if (command.requested_control >= max_control)
-        {
-            printf("Command requested control %.2f exceeds max control %.2f, clamping applied control to %.2f\n",
-                   command.requested_control, max_control, command.applied_control);
-        }
-
-        if (command.applied_control >= max_control)
-        {
-            printf("Saturation Fault: Command applied control %.2f is at max control limit %.2f\n",
-                   command.applied_control, max_control);
-        }
-
-        printf("step %d: disturbance = %.2f, true_error = %.2f, measured_error = %.2f, requested = %.2f, applied = %.2f, actuator_position = %.2f\n",
-               step,
-               plant.disturbance,
-               measurement.true_error,
-               measurement.measured_error,
-               command.requested_control,
-               command.applied_control,
-               plant.actuator_position);
+        TelemetrySnapshot snapshot = make_telemetry_snapshot(&plant, &measurement, &command);
+        log_telemetry(&snapshot);
     }
 
     return 0;
