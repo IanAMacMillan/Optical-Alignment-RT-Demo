@@ -33,6 +33,7 @@ typedef struct
     double applied_control;
     double actuator_position;
     int saturated;
+    int controller_enabled;
 } TelemetrySnapshot;
 
 static double sample_noise(void)
@@ -86,9 +87,17 @@ static SensorMeasurement measure_sensor(const AlignmentPlantState *plant, int st
     return measurement;
 }
 
-static ControlCommand run_controller(const SensorMeasurement *measurement, double kp, double max_control)
+static ControlCommand run_controller(const SensorMeasurement *measurement, double kp, double max_control, int controller_enabled)
 {
     ControlCommand command;
+    if (!controller_enabled)
+    {
+        command.step = measurement->step;
+        command.requested_control = 0.0;
+        command.applied_control = 0.0;
+        command.saturated = 0;
+        return command;
+    }
 
     command.step = measurement->step;
     command.requested_control = kp * measurement->measured_error;
@@ -107,7 +116,8 @@ static TelemetrySnapshot make_telemetry_snapshot(
     const AlignmentPlantState *plant,
     const SensorMeasurement *measurement,
     const ControlCommand *command,
-    double sample_period_s)
+    double sample_period_s,
+    int controller_enabled)
 {
     TelemetrySnapshot snapshot;
 
@@ -120,15 +130,17 @@ static TelemetrySnapshot make_telemetry_snapshot(
     snapshot.applied_control = command->applied_control;
     snapshot.actuator_position = plant->actuator_position;
     snapshot.saturated = command->saturated;
+    snapshot.controller_enabled = controller_enabled;
 
     return snapshot;
 }
 
 static void log_telemetry(const TelemetrySnapshot *snapshot)
 {
-    printf("step %d time %.2f s: disturbance = %.2f, true_error = %.2f, measured_error = %.2f, requested = %.2f, applied = %.2f, actuator_position = %.2f, saturated = %d\n",
+    printf("step %d time %.2f s: enabled = %d, disturbance = %.2f, true_error = %.2f, measured_error = %.2f, requested = %.2f, applied = %.2f, actuator_position = %.2f, saturated = %d\n",
            snapshot->step,
            snapshot->time_s,
+           snapshot->controller_enabled,
            snapshot->disturbance,
            snapshot->true_error,
            snapshot->measured_error,
@@ -143,6 +155,7 @@ int main(void)
     const double kp = 0.4;
     const double max_control = 0.12;
     const double sample_period_s = 0.01;
+    int controller_enabled = 1;
 
     srand(1);
 
@@ -154,13 +167,22 @@ int main(void)
     {
         update_disturbance(&plant, step);
 
+        if (step >= 8 && step < 11)
+        {
+            controller_enabled = 0;
+        }
+        else
+        {
+            controller_enabled = 1;
+        }
+
         SensorMeasurement measurement = measure_sensor(&plant, step);
-        ControlCommand command = run_controller(&measurement, kp, max_control);
+        ControlCommand command = run_controller(&measurement, kp, max_control, controller_enabled);
 
         apply_actuator(&plant, &command);
 
         TelemetrySnapshot snapshot =
-            make_telemetry_snapshot(&plant, &measurement, &command, sample_period_s);
+            make_telemetry_snapshot(&plant, &measurement, &command, sample_period_s, controller_enabled);
         log_telemetry(&snapshot);
     }
 
