@@ -25,6 +25,7 @@ typedef struct
 typedef struct
 {
     int step;
+    double time_s;
     double disturbance;
     double true_error;
     double measured_error;
@@ -105,11 +106,13 @@ static void apply_actuator(AlignmentPlantState *plant, const ControlCommand *com
 static TelemetrySnapshot make_telemetry_snapshot(
     const AlignmentPlantState *plant,
     const SensorMeasurement *measurement,
-    const ControlCommand *command)
+    const ControlCommand *command,
+    double sample_period_s)
 {
     TelemetrySnapshot snapshot;
 
     snapshot.step = measurement->step;
+    snapshot.time_s = measurement->step * sample_period_s;
     snapshot.disturbance = plant->disturbance;
     snapshot.true_error = measurement->true_error;
     snapshot.measured_error = measurement->measured_error;
@@ -123,8 +126,9 @@ static TelemetrySnapshot make_telemetry_snapshot(
 
 static void log_telemetry(const TelemetrySnapshot *snapshot)
 {
-    printf("step %d: disturbance = %.2f, true_error = %.2f, measured_error = %.2f, requested = %.2f, applied = %.2f, actuator_position = %.2f, saturated = %d\n",
+    printf("step %d time %.2f s: disturbance = %.2f, true_error = %.2f, measured_error = %.2f, requested = %.2f, applied = %.2f, actuator_position = %.2f, saturated = %d\n",
            snapshot->step,
+           snapshot->time_s,
            snapshot->disturbance,
            snapshot->true_error,
            snapshot->measured_error,
@@ -138,6 +142,7 @@ int main(void)
 {
     const double kp = 0.4;
     const double max_control = 0.12;
+    const double sample_period_s = 0.01;
 
     srand(1);
 
@@ -154,7 +159,8 @@ int main(void)
 
         apply_actuator(&plant, &command);
 
-        TelemetrySnapshot snapshot = make_telemetry_snapshot(&plant, &measurement, &command);
+        TelemetrySnapshot snapshot =
+            make_telemetry_snapshot(&plant, &measurement, &command, sample_period_s);
         log_telemetry(&snapshot);
     }
 
