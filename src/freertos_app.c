@@ -93,6 +93,13 @@ static void SensorTask(void *pvParameters)
         measurement.disturbance = disturbance_for_sample(measurement.sample_count);
         measurement.true_error = measurement.disturbance - actuator_position;
         measurement.measured_error = measurement.true_error + sample_noise();
+
+        if (xQueueSend(g_measurement_queue, &measurement, portMAX_DELAY) != pdPASS)
+        {
+            fprintf(stderr, "Failed to send measurement to queue\n");
+        }
+
+        vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(SENSOR_TASK_PERIOD_MS));
     }
 }
 
@@ -152,13 +159,13 @@ static void LoggerTask(void *pvParameters)
             sensor_sample_count = g_shared_status.sensor_sample_count;
             control_tick = g_shared_status.control_tick;
             control_cycle_count = g_shared_status.control_cycle_count;
-            xSemaphoreGive(g_status_mutex);
             disturbance = g_shared_status.disturbance;
             actuator_position = g_shared_status.actuator_position;
             true_error = g_shared_status.true_error;
             measured_error = g_shared_status.measured_error;
             requested_control = g_shared_status.requested_control;
             applied_control = g_shared_status.applied_control;
+            xSemaphoreGive(g_status_mutex);
         }
 
         printf("[LoggerTask ] logger_tick = %lu, sensor_tick = %lu, samples = %lu, control_tick = %lu, cycles = %lu, disturbance = %.2f, true_error = %.2f, measured_error = %.2f, requested = %.2f, applied = %.2f, actuator = %.2f\n",
