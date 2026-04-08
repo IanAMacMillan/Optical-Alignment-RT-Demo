@@ -34,11 +34,15 @@ typedef struct
     double actuator_position;
     int saturated;
     int controller_enabled;
+    int fault_detected;
+    int consecutive_saturation_count;
 } TelemetrySnapshot;
 
 typedef struct
 {
     int controller_enabled;
+    int fault_detected;
+    int consecutive_saturation_count;
 } SupervisorState;
 
 static SupervisorState update_supervisor_state(int step)
@@ -46,6 +50,8 @@ static SupervisorState update_supervisor_state(int step)
     SupervisorState supervisor;
 
     supervisor.controller_enabled = 1;
+    supervisor.fault_detected = 0;
+    supervisor.consecutive_saturation_count = 0;
 
     if (step >= 8 && step < 11)
     {
@@ -109,7 +115,7 @@ static SensorMeasurement measure_sensor(const AlignmentPlantState *plant, int st
 static ControlCommand run_controller(const SensorMeasurement *measurement, double kp, double max_control, const SupervisorState *supervisor)
 {
     ControlCommand command;
-    if (!supervisor->controller_enabled)
+    if (!supervisor->controller_enabled || supervisor->fault_detected)
     {
         command.step = measurement->step;
         command.requested_control = 0.0;
@@ -150,16 +156,20 @@ static TelemetrySnapshot make_telemetry_snapshot(
     snapshot.actuator_position = plant->actuator_position;
     snapshot.saturated = command->saturated;
     snapshot.controller_enabled = supervisor->controller_enabled;
+    snapshot.fault_detected = supervisor->fault_detected;
+    snapshot.consecutive_saturation_count = supervisor->consecutive_saturation_count;
 
     return snapshot;
 }
 
 static void log_telemetry(const TelemetrySnapshot *snapshot)
 {
-    printf("step %d time %.2f s: enabled = %d, disturbance = %.2f, true_error = %.2f, measured_error = %.2f, requested = %.2f, applied = %.2f, actuator_position = %.2f, saturated = %d\n",
+    printf("step %d time %.2f s: enabled = %d, fault = %d, sat_count = %d, disturbance = %.2f, true_error = %.2f, measured_error = %.2f, requested = %.2f, applied = %.2f, actuator_position = %.2f, saturated = %d\n",
            snapshot->step,
            snapshot->time_s,
            snapshot->controller_enabled,
+           snapshot->fault_detected,
+           snapshot->consecutive_saturation_count,
            snapshot->disturbance,
            snapshot->true_error,
            snapshot->measured_error,
@@ -169,12 +179,29 @@ static void log_telemetry(const TelemetrySnapshot *snapshot)
            snapshot->saturated);
 }
 
+static void update_fault_monitor(SupervisorState *supervisor, const ControlCommand *command)
+{
+    if (command->saturated)
+    {
+        supervisor->consecutive_saturation_count++;
+    }
+    else
+    {
+        supervisor->consecutive_saturation_count = 0;
+    }
+
+    if (supervisor->consecutive_saturation_count >= 3)
+    {
+        supervisor->fault_detected = 1;
+        supervisor->controller_enabled = 0;
+    }
+}
+
 int main(void)
 {
     const double kp = 0.4;
     const double max_control = 0.12;
     const double sample_period_s = 0.01;
-    int controller_enabled = 1;
 
     srand(1);
 
@@ -192,6 +219,8 @@ int main(void)
         ControlCommand command = run_controller(&measurement, kp, max_control, &supervisor);
 
         apply_actuator(&plant, &command);
+
+        update_fault_monitor(&supervisor, &command);
 
         TelemetrySnapshot snapshot =
             make_telemetry_snapshot(&plant, &measurement, &command, sample_period_s, &supervisor);
