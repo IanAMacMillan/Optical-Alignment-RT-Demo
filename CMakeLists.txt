@@ -11,6 +11,7 @@ set(FREERTOS_PORT_DIR ${FREERTOS_KERNEL_DIR}/portable/ThirdParty/GCC/Posix)
 
 add_executable(optical_alignment_rt_demo
     src/freertos_app.c
+    src/controller.c
     ${FREERTOS_KERNEL_DIR}/tasks.c
     ${FREERTOS_KERNEL_DIR}/queue.c
     ${FREERTOS_KERNEL_DIR}/list.c
