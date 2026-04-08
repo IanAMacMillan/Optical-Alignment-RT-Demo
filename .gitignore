@@ -4,3 +4,4 @@ main.yml
 main
 main.dSYM
 .vscode/tasks.json
+build/
