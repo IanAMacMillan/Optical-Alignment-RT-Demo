@@ -1,10 +1,10 @@
-# Optical Alignment RTOS
+# Optical Alignment using freeRTOS
 
 This is a small FreeRTOS example of an optical alignment controller simulator.
 
-<video src="assets/GUI_Demo.mov" autoplay muted loop playsinline width="960"></video>
+![GUI demo](assets/GUI_Demo.gif)
 
-## basic Model
+## Basic Model
 
 - `SensorTask` produces a noisy alignment-error measurement
 - `ControlTask` consumes that measurement and computes a proportional correction
@@ -49,7 +49,7 @@ The FreeRTOS tick rate is 100 Hz, so one RTOS tick is 10 ms.
 - `Requested`: controller output before limiting
 - `Applied`: controller output after limiting -->
 
-## to Run It
+## How to Run
 
 From the repository root:
 
