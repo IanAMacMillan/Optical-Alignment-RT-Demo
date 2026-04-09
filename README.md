@@ -1,8 +1,8 @@
 # Optical Alignment RTOS
 
-This is a small FreeRTOS-based optical alignment controller simulator I built. The point was to practice RTOS structure in a project that still feels close to optical instrumentation: sensing, control, actuation, telemetry, and operator interaction.
+This is a small FreeRTOS example of an optical alignment controller simulator.
 
-<video src="assets/GUI_Demo.mov" controls muted playsinline width="960"></video>
+<video src="assets/GUI_Demo.mov" autoplay muted loop playsinline width="960"></video>
 
 ## basic Model
 
@@ -21,24 +21,13 @@ measured_error = true_error + sensor_noise
 
 When the controller is disabled, actuator correction goes to zero and the plant drifts to the external offset.
 
-## Visualizer Variables
-
-- `Setpoint`: the desired target
-- `External Offset`: the outside bias pushing the plant
-- `True Value`: the actual plant output
-- `Actuator`: the corrective effort
-- `True Error`: `setpoint - true_value`
-- `Measured Error`: noisy sensor view of the error
-- `Requested`: controller output before limiting
-- `Applied`: controller output after limiting
-
 ## RTOS Structure
 
-- `SensorTask`: priority `3`, periodic `200 ms`, queue producer
-- `ControlTask`: priority `2`, queue consumer, computes correction
-- `LoggerTask`: priority `1`, periodic `1000 ms`, low-priority telemetry
-- `CommandTask`: priority `1`, periodic `100 ms`, reads GUI commands
-- `SnapshotTask`: priority `1`, periodic `100 ms`, exports GUI snapshots
+- `SensorTask`: priority 3, periodic 200 ms, queue producer
+- `ControlTask`: priority 2, queue cosumer, computes correction
+- `LoggerTask`: priority 1, periodic `1000 ms, low-priority telemetry
+- `CommandTask`: priority 1, periodic 100 ms, reads GUI commands
+- `SnapshotTask`: priority 1, periodic 100 ms, exports GUI snapshots
 
 Why it is arranged this way:
 
@@ -47,7 +36,18 @@ Why it is arranged this way:
 - mutex is used for shared snapshot/state
 - GUI tooling stays outside the real-time control path
 
-The FreeRTOS tick rate is `100 Hz`, so one RTOS tick is `10 ms`.
+The FreeRTOS tick rate is 100 Hz, so one RTOS tick is 10 ms.
+
+<!-- ## Visualizer Variables
+
+- `Setpoint`: the desired target
+- `External Offset`: the outside bias pushing the plant
+- `True Value`: the actual plant output
+- `Actuator`: the corrective effort
+- `True Error`: setpoint - true_value
+- `Measured Error`: noisy sensor view of the error
+- `Requested`: controller output before limiting
+- `Applied`: controller output after limiting -->
 
 ## to Run It
 
